@@ -462,7 +462,8 @@ describe('backups', () => {
 			exportedAt: '2026-10-09T00:00:00.000Z',
 			versions: { timers: 2, '': 3 },
 			data: { 'app:timers:presets': { minutes: [1] }, 'app:settings': { theme: 'dark' } },
-			unclaimed: { 'app:removed-plugin:thing': { keep: true } }
+			unclaimed: { 'app:removed-plugin:thing': { keep: true } },
+			unclaimedVersions: {}
 		});
 
 		const b = app();
@@ -541,6 +542,101 @@ describe('backups', () => {
 		expect(b.storage.read(b.settings)).toEqual({ y: 2 });
 	});
 
+	describe('when a plugin with migrations was removed (#51)', () => {
+		/** An app with the `old` plugin at the given migrations (none: removed). */
+		function withOld(adapter = memoryStorage(), runs: number[] = [], tos: number[] = []) {
+			const storage = createStorage({ adapter, appName: 'x', onError: vi.fn() });
+			storage.scope('').entry('settings', { label: 'S', parse: (v) => v });
+			let thing;
+			if (tos.length) {
+				const old = storage.scope('old');
+				for (const to of tos)
+					old.migration({
+						to,
+						run(d) {
+							runs.push(to);
+							d['app:old:thing'] = `${d['app:old:thing']}+${to}`;
+						}
+					});
+				thing = old.entry('thing', { label: 'T', parse: (v) => v });
+			}
+			return { storage, adapter, thing, runs };
+		}
+
+		function oldBackup() {
+			const a = withOld(memoryStorage(), [], [1]);
+			a.storage.write(a.thing!, 'hello');
+			return JSON.stringify(a.storage.exportData());
+		}
+
+		it('still imports a backup made before, keeping its data as unclaimed', () => {
+			const b = withOld();
+			const parsed = b.storage.parseBackup(oldBackup());
+			expect(parsed.ok).toBe(true);
+			if (!parsed.ok) return;
+			expect(parsed.backup.unclaimed).toEqual({ 'app:old:thing': 'hello' });
+			expect(parsed.backup.unclaimedVersions).toEqual({ old: 1 });
+			expect(b.storage.importData(parsed.backup, 'replace')).toBe(true);
+			expect(b.adapter.data.get('app:old:thing')).toBe('"hello"');
+			expect(b.adapter.data.get('app:version:old')).toBe('1');
+		});
+
+		it('migrates only what the data hasn’t had when the plugin comes back', () => {
+			// Removed on this device: the data and its version stay, and backups carry both.
+			const b = withOld();
+			const parsed = b.storage.parseBackup(oldBackup());
+			if (!parsed.ok) throw new Error(parsed.error);
+			b.storage.importData(parsed.backup, 'replace');
+			const backup = b.storage.exportData();
+			expect(backup.unclaimedVersions).toEqual({ old: 1 });
+
+			// Back on the same device.
+			const same = withOld(b.adapter, [], [1, 2]);
+			expect(same.storage.read(same.thing!)).toBe('hello+2');
+			expect(same.runs).toEqual([2]);
+
+			// Back on another device, from the backup made while it was gone.
+			const other = withOld(memoryStorage(), [], [1, 2]);
+			const again = other.storage.parseBackup(JSON.stringify(backup));
+			expect(again.ok && again.backup.data).toEqual({ 'app:old:thing': 'hello+2' });
+			expect(other.runs).toEqual([2]);
+		});
+
+		it('never leaves imported data under another version', () => {
+			const parsed = withOld().storage.parseBackup(oldBackup()); // app:old:thing at v1
+			if (!parsed.ok) throw new Error(parsed.error);
+
+			// Leftovers deleted at v2: the version goes too, so merge imports v1 with its version.
+			const cleared = withOld(memoryStorage({ 'app:old:x': '1', 'app:version:old': '2' }));
+			cleared.storage.removeUnclaimed(['app:old:x']);
+			expect(cleared.storage.importData(parsed.backup, 'merge')).toBe(true);
+			expect(cleared.adapter.data.get('app:old:thing')).toBe('"hello"');
+			expect(cleared.adapter.data.get('app:version:old')).toBe('1');
+
+			// Data still here at v2: merge keeps it, replace takes the backup's whole.
+			const initial = { 'app:old:x': '1', 'app:version:old': '2' };
+			const merged = withOld(memoryStorage(initial));
+			expect(merged.storage.importData(parsed.backup, 'merge')).toBe(true);
+			expect(Object.fromEntries(merged.adapter.data)).toEqual(initial);
+			const replaced = withOld(memoryStorage(initial));
+			expect(replaced.storage.importData(parsed.backup, 'replace')).toBe(true);
+			expect(replaced.adapter.data.has('app:old:x')).toBe(false);
+			expect(replaced.adapter.data.get('app:old:thing')).toBe('"hello"');
+			expect(replaced.adapter.data.get('app:version:old')).toBe('1');
+		});
+
+		it('still refuses data newer than a registered plugin knows', () => {
+			const b = withOld(memoryStorage(), [], [1]);
+			const backup = JSON.parse(oldBackup());
+			backup.unclaimedVersions = { old: 5 };
+			delete backup.versions.old;
+			expect(b.storage.parseBackup(JSON.stringify(backup))).toEqual({
+				ok: false,
+				error: expect.stringContaining('newer version')
+			});
+		});
+	});
+
 	it('lists and deletes only unclaimed keys', () => {
 		const b = app({
 			'app:timers:presets': '{"minutes":[1]}',
@@ -551,10 +647,10 @@ describe('backups', () => {
 		});
 		expect(b.storage.unclaimed()).toEqual([{ key: 'app:gone:x', namespace: 'gone' }]);
 		b.storage.removeUnclaimed(['app:gone:x', 'app:timers:presets', 'not-ours']);
+		// The removed plugin's version goes with the last of its data.
 		expect([...b.adapter.data.keys()].sort()).toEqual([
 			'app:timers:presets',
 			'app:timers:stale',
-			'app:version:gone',
 			'not-ours'
 		]);
 	});
