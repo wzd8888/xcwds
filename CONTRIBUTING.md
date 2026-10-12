@@ -29,3 +29,8 @@ anything a generated app uses, including `packages/create`).
   each plugin's options, decorators and settings from its types, so document those with doc
   comments.
 - Design changes go through an RFC in `docs/rfc/`.
+- CI also runs the build, unit tests and `pnpm test:starter` on Node 22.18, the oldest Node the
+  packages' `engines` allow; raise that job's `node-version` together with `engines`.
+- Workflows pin every action to a commit SHA with its version in a comment
+  (`uses: actions/checkout@<sha> # v7.0.1`); Renovate keeps both up to date. Give a new job only
+  the `permissions` it needs.
