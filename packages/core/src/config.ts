@@ -282,8 +282,8 @@ export const ICONS = {
 
 /**
  * The Web App Manifest for a config. Everything is under `base` (SvelteKit's `paths.base`), so
- * apps work on `user.github.io/repo` as well as on their own domain. `onManifest` hooks run on
- * the result, then `config.manifest` is merged over it by the integration.
+ * apps work on `user.github.io/repo` as well as on their own domain. `config.manifest` is merged
+ * over the generated manifest, then `onManifest` hooks run on the result.
  */
 export function createManifest(
 	config: ResolvedConfig,

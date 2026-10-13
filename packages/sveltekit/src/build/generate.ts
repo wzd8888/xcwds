@@ -183,10 +183,7 @@ export async function generate({
 				codes.CONFIG_INVALID,
 				`onPrerender returned ${JSON.stringify(path)}; paths start with "/" and have no query or hash.`
 			);
-	const manifest = {
-		...(await app.hooks.reduce('onManifest', createManifest(config, { base }))),
-		...config.manifest
-	};
+	const manifest = await app.hooks.reduce('onManifest', createManifest(config, { base }));
 	await app.close();
 
 	const state: BuildState = {

@@ -131,6 +131,26 @@ describe('generate', () => {
 		expect(client).toContain('href=\\"/sub/manifest.webmanifest\\"');
 	});
 
+	it('keeps what `onManifest` hooks add to a key the config also sets (#132)', async () => {
+		await plugin(
+			'xcwds-plugin-tools',
+			{ '.': './index.js' },
+			`export const build = (app) => {
+	app.addHook('onManifest', (m) => ({ ...m, shortcuts: [...(m.shortcuts ?? []), { name: 'Timer' }] }));
+};`
+		);
+		await write(
+			'xcwds.config.ts',
+			`export default {
+	brand: { name: 'Test' },
+	manifest: { shortcuts: [{ name: 'Home' }] },
+	plugins: [{ name: 'xcwds-plugin-tools', options: {} }]
+};`
+		);
+		const state = await generate({ root });
+		expect(state.manifest.shortcuts).toEqual([{ name: 'Home' }, { name: 'Timer' }]);
+	});
+
 	it('survives several builds at once, as when Vitest loads the config for each project (#110)', async () => {
 		const states = await Promise.all(Array.from({ length: 40 }, () => generate({ root })));
 		for (const state of states) expect(state.routes).toHaveLength(1);
